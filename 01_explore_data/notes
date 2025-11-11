@@ -1,0 +1,388 @@
+1) testdaten satz hat 8 Mio einträge und 20 features
+- welche features sich wichtig?
+- wie bekomme ich raus, welche features wichtig sind?
+
+- gibt es fehler in den daten?
+- gibt es ausreißer?
+
+- wie sind die features verteilt?
+
+- welche features sind numerisch, welche kategorisch?
+- welche features sind eigentlich zeitangben?
+- welche features sind unnötig?
+
+- wie sieht die zielverteilung aus?
+
+
+1) gibt es daten die bereinigt werden müssen?
+2) welche features gibt es? was bedeuten die features jeweils? Welche relevanz haben die features für das trainieren?
+2.1 hat der passenger count einen einfluss?
+2.1.1 hängt passenger count mit einem anderen feature zusammen?
+- wie stark unterscheiden sich die taxiunternehmen? gibt es einen premium anbieter? zahlen kunden bei einem anbieter mehr prozentuales trinkgeld?
+- wie stark unterscheiden sich abholorte?
+-
+
+3) welchen datentyp haben die features?
+4) welche neuen features können abgeleitet werden?
+5) Interaktionsanalysen: Welche features interagieren miteinander?
+passenger_count × payment_type
+trip_distance × payment_type
+hour_of_day × payment_type
+is_airport_trip × payment_type
+PULocationID × payment_type
+
+6) welche features sind kategorisch? wie kann man diese clustern?
+7) welche ausreißer gibt es?
+
+
+##########################
+Auswertung der Ergebnisse
+##########################
+
+1) Imbalance Ratio (Anzahl 0/ Anzahl 1)
+= 1.8012528603417879
+-> Klasse = (Trinkgeld kleiner 20%) kommt etwa 1.8x so häufig vor wie Klasse 1 (Trinkgeld größer 20%)
+-> keine starke Ungleichheit
+-> Tree based Modelle müssten gut geeignet sein
+
+2)
+row_nr                  fortlaufender index                                 0: irrelevant
+VendorID                taxi-unternehmen-id                                 2: man müsste untersuchen, ob kunden je nach anbieter prozentual mehr trinkgeld zahlen. ist aber eher unwahrscheinlich
+tpep_pickup_datetime    startzeit der fahrt                                 8: es könnte bestimmte Uhrzeiten, Wochentage oder Saisonalitäten geben, die trinkgeld beeinflussen
+tpep_dropoff_datetime   ende der fahrt                                      5: redundaten mit startzeit. indirekt interessant um neues feature abzuleiten
+passenger_count         anzahl der passagiere                               3: muss untersucht werden
+trip_distance           fahrstrecke (in meilen?)                            9: entscheidend für trinkgeld. interessant für neue features?
+RatecodeID              tarifcode                                           4: gibt es eventuell spezielle tarife? korreliert es zB mit airport fahrten?
+store_and_fwd_flag      ob fahrt zwichengespeichert wurde                   1: immer N, juckt nicht
+PULocationID            abholort (gebietscode von NYC Taxi TLC)             8: bestimmte gegenden mit mehr geld? kommt auch drauf an wie unterschiedlich
+DOLocationID            zielort  (gebietscode von NYC Taxi TLC)             8: sehr entscheidend, weil aufschluss wie viel geld person hat
+payment_type            zahlungsmethode                                     10: stärkstes feature
+fare_amount             fahrpreis/kosten                                    8: basis für die relative trinkgeldabrechnung
+extra                   zuschläge zB durch Nachtfahrten?                    4: kommt drauf an wie stark preis beeinflusst wird
+mta_tax                 gesetzlich festgelegte Pauschalgebühr               0: wenn pauschale, dann untinteressant
+tolls_amount            mautgebühren                                        4: korrelation mit bestimmten strecen? airport?
+improvement_surcharge   infrastruktur-aufpreis                              -: muss noch angeschaut werden
+congestion_surcharge    staugebühr                                          -: muss noch untersucht werden
+airport_fee             extrea beführen für flughafenfahrten                7: eventuell touristen? geben die dann mehr trinkgeld oder wengier?
+cbd_congestion_fee      innenstadtgebühr                                    -: muss noch untersucht weden
+has_tipped_over_20      wurde über oder unter 20% getipped? -> zielvariable
+
+-> wichtigsten features:
+10: payment_type
+9:  trip_distance
+8:  fare_amount, PULocationID, DOLocationID, tpep_pickup_datetime
+
+-> alle mit unter 3 entfernen
+
+2.1 hat der passenger count einen einfluss?
+┌─────────────────┬──────────────────┬───────────┐
+│ passenger_count ┆ tip_over_20_rate ┆ num_rides │
+│ ---             ┆ ---              ┆ ---       │
+│ i64             ┆ f64              ┆ u32       │
+╞═════════════════╪══════════════════╪═══════════╡
+│ 1               ┆ 0.356952         ┆ 6400271   │
+│ 2               ┆ 0.357106         ┆ 1040595   │
+│ 3               ┆ 0.356851         ┆ 319509    │
+│ 4               ┆ 0.356421         ┆ 159640    │
+│ 5               ┆ 0.35953          ┆ 79985     │
+└─────────────────┴──────────────────┴───────────┘
+-> features selbst ist schwach
+-> könnte aber mit anderen features zusmmenhängen
+
+3)
+=
+row_nr                     UInt32
+VendorID                   Int32
+tpep_pickup_datetime       Datetime(time_unit='us', time_zone=None)
+tpep_dropoff_datetime      Datetime(time_unit='us', time_zone=None)
+passenger_count            Int64
+trip_distance              Float64
+RatecodeID                 Int32
+store_and_fwd_flag         String
+PULocationID               Int32
+DOLocationID               Int32
+payment_type               Int32
+fare_amount                Float64
+extra                      Float64
+mta_tax                    Float64
+tolls_amount               Float64
+improvement_surcharge      Float64
+congestion_surcharge       Float64
+airport_fee                Float64
+cbd_congestion_fee         Float64
+has_tipped_over_20         Int8
+->
+
+
+4)
+- hour_of_day
+- is_weekend
+- is_special_day
+- trip_duration_minutes
+- price_per_mile
+- is_airport_trip
+
+
+
+5) Interaktionsanalysen: Welche features interagieren miteinander?
+passenger_count × payment_type
+┌─────────────────┬──────────────┬──────────┬───────────┐
+│ passenger_count ┆ payment_type ┆ tip_rate ┆ num_rides │
+│ ---             ┆ ---          ┆ ---      ┆ ---       │
+│ i64             ┆ i32          ┆ f64      ┆ u32       │
+╞═════════════════╪══════════════╪══════════╪═══════════╡
+│ 1               ┆ 0            ┆ 0.049393 ┆ 1489811   │
+│ 1               ┆ 1            ┆ 0.541115 ┆ 4084409   │
+│ 1               ┆ 2            ┆ 0.00031  ┆ 630045    │
+│ 1               ┆ 3            ┆ 0.00205  ┆ 42931     │
+│ 1               ┆ 4            ┆ 0.00383  ┆ 152467    │
+│ 1               ┆ 5            ┆ 0.0      ┆ 608       │
+│ 2               ┆ 0            ┆ 0.049142 ┆ 242744    │
+...
+│ 4               ┆ 0            ┆ 0.050318 ┆ 37005     │
+│ 4               ┆ 1            ┆ 0.540387 ┆ 101814    │
+│ 4               ┆ 2            ┆ 0.000251 ┆ 15958     │
+│ 4               ┆ 3            ┆ 0.001912 ┆ 1046      │
+│ 4               ┆ 4            ┆ 0.003158 ┆ 3800      │
+│ 4               ┆ 5            ┆ 0.0      ┆ 17        │
+│ 5               ┆ 0            ┆ 0.047966 ┆ 18680     │
+│ 5               ┆ 1            ┆ 0.545298 ┆ 51073     │
+│ 5               ┆ 2            ┆ 0.000515 ┆ 7761      │
+│ 5               ┆ 3            ┆ 0.003766 ┆ 531       │
+│ 5               ┆ 4            ┆ 0.002584 ┆ 1935      │
+│ 5               ┆ 5            ┆ 0.0      ┆ 5         │
+└─────────────────┴──────────────┴──────────┴───────────┘
+-> payment_type dominiert das verhalten sehr stark
+-> passenger_count spielt kaum eine rolle
+
+
+
+trip_distance × payment_type
+┌─────────────────┬──────────────┬──────────┬───────────┐
+│ distance_bucket ┆ payment_type ┆ tip_rate ┆ num_rides │
+│ ---             ┆ ---          ┆ ---      ┆ ---       │
+│ str             ┆ i32          ┆ f64      ┆ u32       │
+╞═════════════════╪══════════════╪══════════╪═══════════╡
+│ long            ┆ 0            ┆ 0.000212 ┆ 136729    │
+│ long            ┆ 1            ┆ 0.607667 ┆ 375941    │
+│ long            ┆ 2            ┆ 0.000035 ┆ 57339     │
+│ long            ┆ 3            ┆ 0.0      ┆ 4043      │
+│ long            ┆ 4            ┆ 0.000358 ┆ 13980     │
+│ long            ┆ 5            ┆ 0.0      ┆ 49        │
+....
+│ very_long       ┆ 0            ┆ 0.0      ┆ 25706     │
+│ very_long       ┆ 1            ┆ 0.624833 ┆ 69673     │
+│ very_long       ┆ 2            ┆ 0.0      ┆ 10764     │
+│ very_long       ┆ 3            ┆ 0.0      ┆ 700       │
+│ very_long       ┆ 4            ┆ 0.0      ┆ 2586      │
+│ very_long       ┆ 5            ┆ 0.0      ┆ 8         │
+│ very_short      ┆ 0            ┆ 0.068018 ┆ 417050    │
+│ very_short      ┆ 1            ┆ 0.4632   ┆ 1145299   │
+│ very_short      ┆ 2            ┆ 0.000311 ┆ 176839    │
+│ very_short      ┆ 3            ┆ 0.003855 ┆ 11933     │
+│ very_short      ┆ 4            ┆ 0.004006 ┆ 42691     │
+│ very_short      ┆ 5            ┆ 0.0      ┆ 171       │
+└─────────────────┴──────────────┴──────────┴───────────┘
+- Bei Karten-Zahlung steigt die Tip-Rate mit der Distanz deutlich.
+- Bei Cash wird weiterhin kaum getippt, egal wie lang die Fahrt war.
+-> trip_distance beeinflusst Trinkgelf NUR bei kartenzahlung (dafür aber stark)
+
+
+
+hour_of_day × payment_type
+┌─────────────┬──────────────┬──────────┬───────────┐
+│ hour_of_day ┆ payment_type ┆ tip_rate ┆ num_rides │
+│ ---         ┆ ---          ┆ ---      ┆ ---       │
+│ i8          ┆ i32          ┆ f64      ┆ u32       │
+╞═════════════╪══════════════╪══════════╪═══════════╡
+│ 0           ┆ 0            ┆ 0.047884 ┆ 58287     │
+│ 0           ┆ 1            ┆ 0.527616 ┆ 159891    │
+│ 0           ┆ 2            ┆ 0.000407 ┆ 24553     │
+│ 0           ┆ 3            ┆ 0.001743 ┆ 1721      │
+│ 0           ┆ 4            ┆ 0.004155 ┆ 6017      │
+│ 0           ┆ 5            ┆ 0.0      ┆ 18        │
+│ 1           ┆ 0            ┆ 0.051492 ┆ 38103     │
+│ 1           ┆ 1            ┆ 0.525293 ┆ 105008    │
+│....
+│ 23          ┆ 1            ┆ 0.526598 ┆ 225468    │
+│ 23          ┆ 2            ┆ 0.000286 ┆ 34916     │
+│ 23          ┆ 3            ┆ 0.000425 ┆ 2354      │
+│ 23          ┆ 4            ┆ 0.003852 ┆ 8567      │
+│ 23          ┆ 5            ┆ 0.0      ┆ 31        │
+└─────────────┴──────────────┴──────────┴───────────┘
+- Cash-Zahlungen sind nachts und nach Partys häufiger
+- Trinkgeld bei Cash bleibt aber immer niedrig → kaum Effekt
+- Bei Card-Zahlungen sieht man leichte Tagesrhythmus-Effekte
+-> schwache interaktion
+-> hour_of_day wirkt nur im Card-Segment minimal, Cash bleibt “keine Trinkgeldkultur”
+
+
+
+is_airport_trip × payment_type
+┌─────────────────┬──────────────┬──────────┬───────────┐
+│ is_airport_trip ┆ payment_type ┆ tip_rate ┆ num_rides │
+│ ---             ┆ ---          ┆ ---      ┆ ---       │
+│ i8              ┆ i32          ┆ f64      ┆ u32       │
+╞═════════════════╪══════════════╪══════════╪═══════════╡
+│ 0               ┆ 0            ┆ 0.052349 ┆ 1734320   │
+│ 0               ┆ 1            ┆ 0.544704 ┆ 4754860   │
+│ 0               ┆ 2            ┆ 0.000313 ┆ 733708    │
+│ 0               ┆ 3            ┆ 0.002223 ┆ 49934     │
+│ 0               ┆ 4            ┆ 0.00391  ┆ 177507    │
+│ 0               ┆ 5            ┆ 0.0      ┆ 702       │
+│ 1               ┆ 0            ┆ 0.00878  ┆ 128131    │
+│ 1               ┆ 1            ┆ 0.493764 ┆ 350171    │
+│ 1               ┆ 2            ┆ 0.000093 ┆ 53844     │
+│ 1               ┆ 3            ┆ 0.000272 ┆ 3678      │
+│ 1               ┆ 4            ┆ 0.001145 ┆ 13100     │
+│ 1               ┆ 5            ┆ 0.0      ┆ 45        │
+└─────────────────┴──────────────┴──────────┴───────────┘
+- Bei Airport-Fahrten wird weniger Trinkgeld gegeben als bei normalen Fahrten
+- Aber wieder gilt:
+payment_type	Effekt
+Cash	weiterhin kaum Trinkgeld, egal ob Airport oder nicht
+Card	Unterschied wird sichtbar: Airport → geringere Tip-Rate
+-> Mittlere Interaktion:
+-> Airport wirkt nur für Card-Zahler:
+-> Touristen / Festpreise / Stress → geringeres Card-Tipping.
+
+PULocationID × payment_type
+┌──────────────┬──────────────┬──────────┬───────────┐
+│ PULocationID ┆ payment_type ┆ tip_rate ┆ num_rides │
+│ ---          ┆ ---          ┆ ---      ┆ ---       │
+│ i32          ┆ i32          ┆ f64      ┆ u32       │
+╞══════════════╪══════════════╪══════════╪═══════════╡
+│ 48           ┆ 0            ┆ 0.053363 ┆ 44694     │
+│ 48           ┆ 1            ┆ 0.537048 ┆ 122868    │
+│ 48           ┆ 2            ┆ 0.000472 ┆ 19064     │
+│ 48           ┆ 3            ┆ 0.00457  ┆ 1313      │
+│ 48           ┆ 4            ┆ 0.005001 ┆ 4599      │
+│ 48           ┆ 5            ┆ 0.0      ┆ 13        │
+│...
+│ 239          ┆ 4            ┆ 0.003455 ┆ 4921      │
+│ 239          ┆ 5            ┆ 0.0      ┆ 17        │
+│ 249          ┆ 0            ┆ 0.054318 ┆ 41165     │
+│ 249          ┆ 1            ┆ 0.543412 ┆ 114186    │
+│ 249          ┆ 2            ┆ 0.000392 ┆ 17856     │
+│ 249          ┆ 3            ┆ 0.0      ┆ 1216      │
+│ 249          ┆ 4            ┆ 0.002991 ┆ 4346      │
+│ 249          ┆ 5            ┆ 0.0      ┆ 21        │
+└──────────────┴──────────────┴──────────┴───────────┘
+- Unterschiedliche Stadtteile haben unterschiedliche Trinkgeldkulturen.
+- Diese Lokalität wirkt vor allem bei Kartenzahlung, weil hier Trinkgeld bewusst gegeben wird.
+- Bei Cash bleibt Tippverhalten überall “fast null
+-> Starke Interaktion
+-> PULocationID wirkt nur dort, wo Trinkgeld wirklich gegeben wird → also im Card-Segment.
+
+
+overall: Tippverhalten wird fast ausschließlich von Kartenzahlung getragen. Alle anderen Features (Distanz, Tageszeit, Flughafentransfer, Standort) beeinflussen das Trinkgeldverhalten nur im Segment der Kartenzahler. Bei Barzahlung findet praktisch kein Trinkgeld statt, wodurch dort keine relevanten Interaktionen auftreten.
+Daraus folgen sinnvolle nächste Analyseschritte
+1) Modelle segmentieren: Zwei getrennte Modelle
+
+Da sich Bar- und Kartenzahler fundamental anders verhalten, macht ein gemeinsames Modell wenig Sinn.
+
+Segment	Modell	Erwartung
+Cash	triviales Modell	Ergebnis = fast immer 0
+Card	Hauptmodell	Hier gibt es echte Variabilität / Muster
+
+→ Das steigert Modell-Performance, weil das Modell nicht versuchen muss, zwei komplett verschiedene Verhaltenswelten gleichzeitig zu erklären.
+
+2) Feature Engineering nur für das Card-Segment
+
+Da der Effekt dort sichtbar ist:
+
+Neue sinnvolle Features:
+
+relative distance price ratio (long trip + low fare → höheres moralisches Tippen)
+
+local tipping culture score per PULocationID
+
+time-of-day as behavioral state (Morning commuters vs. nightlife riders)
+
+airport surcharge indicator (Stress-Level vs. Business traveler)
+
+→ Diese Features verstärken die Signalqualität im Modell.
+
+3) Geografische Cluster bilden (PULocationID)
+
+Da Location stark wirkt, aber sehr viele Kategorien hat:
+
+Vorgehen:
+
+PULocationIDs nach Tip-Rate clustern (z. B. K-Means über Tip-Rates).
+
+Statt 263 IDs → 5–10 Kulturcluster.
+
+Cluster-Name	Beispiel	Bedeutung
+„Business Midtown“	hohe Card-Tip-Rate	Normorientierte Pendler
+„Tourist Airport Zone“	niedrige Airport-Card-Tip-Rate	Kurzreisen / Preisfokus
+„Nightlife Downtown“	moderate Tip-Rate, hohe Cash	Partyverkehr
+
+→ Massive Reduktion von Modellkomplexität + Interpretierbarkeit.
+
+
+4) Distance-Effect genauer modellieren
+
+Wir sahen:
+
+Je länger die Fahrt, desto höher das Trinkgeld – aber nur bei Card.
+
+Das schreit nach:
+
+nichtlinearer Feature-Transformation
+
+log(distance)
+
+distance_bucket (kurz, mittel, lang)
+
+→ Klassische lineare Modelle würden das sonst falsch modellieren.
+
+
+5) Zeitliche Muster prüfen (optional für Forecasting)
+
+Das hourly-Muster war schwach, aber vorhanden im Card-Segment.
+Wir prüfen:
+
+weekday vs weekend
+
+rush-hour vs nightlife
+
+weather events (Regen → mehr Taxis → anderes Tippverhalten)
+
+→ Das kann zeitliche „Zustände“ kodieren.
+
+
+6) welche features sind kategorisch? wie kann man diese clustern?
+Feature                     Typ                             Warum kategorisch?
+payment_type	            diskret, nominal	            0=Cash, 1=Card, …
+passenger_count	            diskret, ordinal	            1, 2, 3 … wenig Varianz, aber strukturgebend
+PULocationID	            nominal, sehr viele Klassen	    beschreibt Stadtviertel
+DOLocationID              	nominal	                        gleiche Idee wie PULocationID
+is_airport_trip	binär	    Flughafenfahrt ja/nein
+hour_of_day	                ordinal	                        kann gruppiert werden (Morgen, Rush, Nacht)
+
+
+
+
+7) welche ausreißer gibt es?
+trip_distance
+- extrem hohe distanzen sind sehr selten und könnten fehler sein
+
+fare_amount
+- negative werte
+- sehr hohe werte
+
+total_amount
+- negative werte
+- sehr hohe werte
+
+passenger_count
+- 0 passagiere
+- größer als 6?
+
+dauer der fahrt (aus pickup & dropoff berechnen)
+- unter 60 sekunden
+- mehr als 3 stunden
+
+ratecodeID / payment_type / tolls / fees
+- selbst keine ausreißer, könnten diese aber erklären
