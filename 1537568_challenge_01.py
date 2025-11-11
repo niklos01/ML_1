@@ -136,13 +136,24 @@ def apply_location_clusters(df, clusters):
 # ---------------------------------------------------------------------
 def train_and_evaluate(df_train, sample_size=None):
 
-    # ✅ OPTION: Speed up testing by sampling
+    # Speed up testing by sampling
     if sample_size is not None:
         df_train = df_train.sample(n=sample_size, seed=SEED)
 
     features = [
-        "trip_distance", "fare_amount", "hour_of_day", "is_weekend",
-        "is_airport_trip", "pickup_cluster", "payment_type"
+        "trip_distance",
+        "fare_amount",
+        "fare_per_km",
+        "extra_fees_total",
+        "distance_bucket",
+        "hour_of_day",
+        "weekday",
+        "is_weekend",
+        "rush_hour",
+        "night_ride",
+        "is_airport_trip",
+        "pickup_cluster",
+        "payment_type"
     ]
 
     X = df_train[features].to_pandas()
@@ -150,10 +161,16 @@ def train_and_evaluate(df_train, sample_size=None):
 
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=SEED)
 
-    model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", RandomForestClassifier(n_estimators=300, random_state=SEED, n_jobs=-1))
-    ])
+    model = RandomForestClassifier(
+        n_estimators=600,
+        max_depth=18,
+        min_samples_split=20,
+        min_samples_leaf=8,
+        max_features="sqrt",
+        class_weight="balanced",
+        n_jobs=-1,
+        random_state=SEED
+    )
 
     model.fit(X_train, y_train)
     preds = model.predict(X_val)
@@ -166,9 +183,21 @@ def train_and_evaluate(df_train, sample_size=None):
 # ---------------------------------------------------------------------
 def create_submission(model, df_test):
     features = [
-        "trip_distance", "fare_amount", "hour_of_day", "is_weekend",
-        "is_airport_trip", "pickup_cluster", "payment_type"
+        "trip_distance",
+        "fare_amount",
+        "fare_per_km",
+        "extra_fees_total",
+        "distance_bucket",
+        "hour_of_day",
+        "weekday",
+        "is_weekend",
+        "rush_hour",
+        "night_ride",
+        "is_airport_trip",
+        "pickup_cluster",
+        "payment_type"
     ]
+
     X_test = df_test[features].to_pandas()
     preds = model.predict(X_test)
 
@@ -191,14 +220,14 @@ def main():
     df_test = engineer_features(df_test)
 
     clusters = compute_location_tip_clusters(df_train)
-    clusters = cluster_locations(clusters, n_clusters=10)
-    print(clusters)
+    clusters = cluster_locations(clusters, n_clusters=7)
+    #print(clusters)
 
-    #df_train = apply_location_clusters(df_train, clusters)
-    #df_test = apply_location_clusters(df_test, clusters)
+    df_train = apply_location_clusters(df_train, clusters)
+    df_test = apply_location_clusters(df_test, clusters)
 
-    #model = train_and_evaluate(df_train, sample_size=1000)  # ✅ much faster during dev
-    #create_submission(model, df_test)
+    model = train_and_evaluate(df_train, sample_size=1000)  # ✅ much faster during dev
+    create_submission(model, df_test)
 
 if __name__ == "__main__":
     main()
