@@ -1,11 +1,7 @@
-# ---------------------------------------------------------------------
-# NYC Taxi Tip Prediction Challenge (Optimized Version)
-# ---------------------------------------------------------------------
-
 import polars as pl
 import numpy as np
 import random
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
 from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
@@ -51,37 +47,49 @@ def load_data():
 # ---------------------------------------------------------------------
 
 def clean_data(df: pl.DataFrame) -> pl.DataFrame:
-    df = df.drop_nulls(["trip_distance", "fare_amount", "passenger_count"])
+    # Remove trips with invalid distance or fare values
+    df = df.filter((pl.col("trip_distance") >= 0.1) & (pl.col("trip_distance") <= 80))
+    df = df.filter((pl.col("fare_amount") >= 2) & (pl.col("fare_amount") <= 500))
 
-    # Fill fee/tax columns
-    fee_columns = [
-        "airport_fee",
-        "tolls_amount",
-        "extra",
-        "mta_tax",
-        "congestion_surcharge",
-        "improvement_surcharge",
-        "cbd_congestion_fee",
-    ]
-    df = df.with_columns([pl.col(c).fill_null(0) for c in fee_columns])
-
-    # Remove physically impossible trips
-    df = df.filter(pl.col("trip_distance").is_between(0.1, 100))
-    df = df.filter(pl.col("passenger_count").is_between(1, 8))
-
-    # Remove bad fare logic (fare_per_km sanity check)
-    df = df.with_columns((pl.col("fare_amount") / pl.col("trip_distance")).alias("fare_per_km"))
-    df = df.filter(pl.col("fare_per_km").is_between(0.05, 200))
+    # Remove extreme outliers based on fare per kilometer
+    df = df.with_columns(
+        (pl.col("fare_amount") / pl.col("trip_distance")).alias("fare_per_km")
+    )
+    q_low = df["fare_per_km"].quantile(0.01)
+    q_high = df["fare_per_km"].quantile(0.99)
+    df = df.filter(pl.col("fare_per_km").is_between(q_low, q_high))
     df = df.drop("fare_per_km")
 
-    # ✅ Memory optimization
+    # Replace negative monetary values with zero
+    money_columns = [
+        "fare_amount", "tip_amount", "total_amount", "tolls_amount",
+        "extra", "mta_tax", "congestion_surcharge"
+    ]
+    df = df.with_columns([
+        pl.when(pl.col(c) < 0).then(0).otherwise(pl.col(c)).alias(c)
+        for c in money_columns if c in df.columns
+    ])
+
+    # Keep only trips with valid pickup and dropoff times and reasonable durations
+    if "tpep_dropoff_datetime" in df.columns:
+        df = df.filter(pl.col("tpep_dropoff_datetime") > pl.col("tpep_pickup_datetime"))
+        df = df.with_columns((
+            (pl.col("tpep_dropoff_datetime") - pl.col("tpep_pickup_datetime"))
+            .dt.total_microseconds() / 60_000_000
+        ).alias("trip_minutes"))
+        df = df.filter((pl.col("trip_minutes") >= 1) & (pl.col("trip_minutes") <= 240))
+        df = df.drop("trip_minutes")
+
+    # Optimize memory usage and ensure correct data types
     df = df.with_columns([
         pl.col("PULocationID").cast(pl.Int16),
         pl.col("DOLocationID").cast(pl.Int16),
-        pl.col("payment_type").cast(pl.Int8),
+        pl.col("payment_type").fill_null(0).cast(pl.Int8),
     ])
 
     return df
+
+
 
 # ---------------------------------------------------------------------
 # FEATURE ENGINEERING
@@ -128,6 +136,14 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
         ).cast(pl.Int8).alias("rush_hour"),
         (pl.col("hour_of_day").is_between(22, 5)).cast(pl.Int8).alias("night_ride"),
     ])
+
+    # Fare per passenger feature
+    if "fare_amount" in df.columns and "passenger_count" in df.columns:
+        df = df.with_columns(
+            (pl.col("fare_amount") / pl.col("passenger_count"))
+            .fill_nan(0)
+            .alias("fare_per_passenger")
+        )
 
     return df
 
@@ -194,14 +210,13 @@ def train_and_evaluate(df_train, sample_size=None):
 
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=SEED)
 
-    model = RandomForestClassifier(
-        n_estimators=320,
-        max_depth=11,
-        min_samples_split=52,
-        min_samples_leaf=3,
-        max_features='log2',
-        class_weight='balanced',
-        n_jobs=-1,
+    model = HistGradientBoostingClassifier(
+        max_depth=7,
+        learning_rate=0.08,
+        max_iter=350,
+        min_samples_leaf=20,
+        l2_regularization=1.0,
+        class_weight="balanced",
         random_state=SEED
     )
 
