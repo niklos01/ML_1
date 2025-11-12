@@ -25,6 +25,32 @@ LOCATION_CONFIG = {
     },
 }
 
+FEATURE_LIST  = [
+    "trip_distance",
+    "trip_minutes",
+    "speed_kmh",
+    "fare_amount",
+    "fare_per_km_net",
+    "fare_per_passenger",
+    "extra_fees_total",
+    "extra_fee_ratio",
+    "distance_bucket",
+    "hour_of_day",
+    "hour_sin",
+    "hour_cos",
+    "weekday",
+    "is_weekend",
+    "rush_hour",
+    "night_ride",
+    "weekend_night",
+    "rush_distance",
+    "is_airport_trip",
+    LOCATION_CONFIG["pul"]["cluster_col"],
+    LOCATION_CONFIG["dol"]["cluster_col"],
+    "payment_type",
+]
+
+
 # ---------------------------------------------------------------------
 # SEED SETUP
 # ---------------------------------------------------------------------
@@ -101,8 +127,12 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
         df = df.with_columns(
             pl.col("tpep_pickup_datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False)
         )
+    if "tpep_dropoff_datetime" in df.columns and df["tpep_dropoff_datetime"].dtype == pl.String:
+        df = df.with_columns(
+            pl.col("tpep_dropoff_datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False)
+        )
 
-    # Create time features
+    # Time features
     df = df.with_columns([
         pl.col("tpep_pickup_datetime").dt.hour().alias("hour_of_day"),
         pl.col("tpep_pickup_datetime").dt.weekday().alias("weekday"),
@@ -116,37 +146,93 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
         pl.col("PULocationID").is_in([132, 138]).cast(pl.Int8).alias("is_airport_trip")
     )
 
+    # Extra fees total
     df = df.with_columns([
-        (pl.col("fare_amount") / pl.col("trip_distance")).alias("fare_per_km"),
         (
-            pl.col("airport_fee")
-            + pl.col("tolls_amount")
-            + pl.col("extra")
-            + pl.col("congestion_surcharge")
-        ).alias("extra_fees_total"),
+            pl.col("airport_fee").fill_null(0)
+            + pl.col("tolls_amount").fill_null(0)
+            + pl.col("extra").fill_null(0)
+            + pl.col("congestion_surcharge").fill_null(0)
+        ).alias("extra_fees_total")
+    ])
+
+    # Net fare per km
+    df = df.with_columns(
+        ((pl.col("fare_amount") - pl.col("extra_fees_total")) / pl.col("trip_distance"))
+        .clip(0, 200)
+        .alias("fare_per_km_net")
+    )
+
+    # Fare per passenger
+    # Fare per passenger (mit Clip für Division durch Null)
+    if "passenger_count" in df.columns:
+        df = df.with_columns(
+            (pl.col("fare_amount") / pl.col("passenger_count").clip(1, None))
+            .fill_nan(0)
+            .alias("fare_per_passenger")
+        )
+
+    # Duration & Speed
+    if "tpep_dropoff_datetime" in df.columns:
+        df = df.with_columns(
+            ((pl.col("tpep_dropoff_datetime") - pl.col("tpep_pickup_datetime"))
+             .dt.total_microseconds() / 60_000_000).alias("trip_minutes")
+        )
+        df = df.with_columns(
+            (pl.col("trip_distance") / (pl.col("trip_minutes") / 60))
+            .clip(0, 120)
+            .alias("speed_kmh")
+        )
+
+    # Distance bucket
+    df = df.with_columns([
         pl.when(pl.col("trip_distance") < 2)
         .then(0)
         .when(pl.col("trip_distance") < 8)
         .then(1)
         .otherwise(2)
-        .alias("distance_bucket"),
+        .alias("distance_bucket")
+    ])
+
+    # Rush hour and night ride
+    df = df.with_columns([
         (
             (pl.col("hour_of_day").is_between(7, 10))
             | (pl.col("hour_of_day").is_between(16, 19))
         ).cast(pl.Int8).alias("rush_hour"),
-        (pl.col("hour_of_day").is_between(22, 5)).cast(pl.Int8).alias("night_ride"),
+        ((pl.col("hour_of_day") >= 22) | (pl.col("hour_of_day") <= 5))
+        .cast(pl.Int8)
+        .alias("night_ride"),
     ])
 
-    # Fare per passenger feature
-    if "fare_amount" in df.columns and "passenger_count" in df.columns:
-        df = df.with_columns(
-            (pl.col("fare_amount") / pl.col("passenger_count"))
-            .fill_nan(0)
-            .alias("fare_per_passenger")
-        )
+    # Weekend-night combination
+    df = df.with_columns(
+        ((pl.col("is_weekend") == 1) & (pl.col("night_ride") == 1))
+        .cast(pl.Int8)
+        .alias("weekend_night")
+    )
+
+    # Rush distance interaction
+    df = df.with_columns(
+        (pl.col("trip_distance") * pl.col("rush_hour"))
+        .alias("rush_distance")
+    )
+
+    # Extra fee ratio
+    df = df.with_columns(
+        (pl.col("extra_fees_total") / pl.col("fare_amount").clip(1, None))
+        .clip(0, 1)
+        .alias("extra_fee_ratio")
+    )
+
+    # Circular time encoding
+    hour_rad = 2 * np.pi * pl.col("hour_of_day") / 24
+    df = df.with_columns([
+        hour_rad.sin().alias("hour_sin"),
+        hour_rad.cos().alias("hour_cos"),
+    ])
 
     return df
-
 # ---------------------------------------------------------------------
 # LOCATION CLUSTERING
 # ---------------------------------------------------------------------
@@ -188,22 +274,7 @@ def train_and_evaluate(df_train, sample_size=None):
     if sample_size is not None:
         df_train = df_train.sample(n=sample_size, seed=SEED)
 
-    features = [
-        "trip_distance",
-        "fare_amount",
-        "fare_per_km",
-        "extra_fees_total",
-        "distance_bucket",
-        "hour_of_day",
-        "weekday",
-        "is_weekend",
-        "rush_hour",
-        "night_ride",
-        "is_airport_trip",
-        LOCATION_CONFIG["pul"]["cluster_col"],
-        LOCATION_CONFIG["dol"]["cluster_col"],
-        "payment_type",
-    ]
+    features = FEATURE_LIST
 
     X = df_train[features].to_pandas()
     y = df_train[TARGET_VAR].to_pandas()
@@ -231,22 +302,7 @@ def train_and_evaluate(df_train, sample_size=None):
 # ---------------------------------------------------------------------
 
 def create_submission(model, df_test):
-    features = [
-        "trip_distance",
-        "fare_amount",
-        "fare_per_km",
-        "extra_fees_total",
-        "distance_bucket",
-        "hour_of_day",
-        "weekday",
-        "is_weekend",
-        "rush_hour",
-        "night_ride",
-        "is_airport_trip",
-        LOCATION_CONFIG["pul"]["cluster_col"],
-        LOCATION_CONFIG["dol"]["cluster_col"],
-        "payment_type",
-    ]
+    features = FEATURE_LIST
 
     X_test = df_test[features].to_pandas()
     preds = model.predict(X_test)
@@ -256,7 +312,7 @@ def create_submission(model, df_test):
         TARGET_VAR: preds.astype(int),
     }).write_csv("submission.csv")
 
-    print("✅ submission.csv successfully written!")
+    print("submission was created")
 
 # ---------------------------------------------------------------------
 # MAIN PIPELINE
