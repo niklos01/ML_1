@@ -195,14 +195,14 @@ def train_and_evaluate(df_train, sample_size=None):
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=SEED)
 
     model = RandomForestClassifier(
-        n_estimators=600,
-        max_depth=18,
-        min_samples_split=20,
-        min_samples_leaf=8,
-        max_features="sqrt",
-        class_weight="balanced",
+        n_estimators=320,
+        max_depth=11,
+        min_samples_split=52,
+        min_samples_leaf=3,
+        max_features='log2',
+        class_weight='balanced',
         n_jobs=-1,
-        random_state=SEED,
+        random_state=SEED
     )
 
     model.fit(X_train, y_train)
