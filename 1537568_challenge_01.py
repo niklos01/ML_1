@@ -9,6 +9,9 @@ from sklearn.metrics import f1_score
 # ---------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------
+SEED = 42
+np.random.seed(SEED)
+random.seed(SEED)
 
 TARGET_VAR = "has_tipped_over_20"
 
@@ -25,39 +28,32 @@ LOCATION_CONFIG = {
     },
 }
 
-FEATURE_LIST  = [
-    "trip_distance",
-    "trip_minutes",
-    "speed_kmh",
-    "fare_amount",
-    "fare_per_km_net",
-    "fare_per_passenger",
-    "extra_fees_total",
-    "extra_fee_ratio",
-    "distance_bucket",
-    "hour_of_day",
-    "hour_sin",
-    "hour_cos",
-    "weekday",
-    "is_weekend",
-    "rush_hour",
-    "night_ride",
-    "weekend_night",
-    "rush_distance",
-    "is_airport_trip",
-    LOCATION_CONFIG["pul"]["cluster_col"],
-    LOCATION_CONFIG["dol"]["cluster_col"],
-    "payment_type",
+FEATURE_LIST = [
+    # Original dataset features
+    "payment_type",           # payment method
+    #"trip_distance",          # trip length in miles
+    LOCATION_CONFIG["pul"]["cluster_col"],  # pickup location cluster
+    LOCATION_CONFIG["dol"]["cluster_col"],  # dropoff location cluster
+    "fare_amount",            # total fare amount
+
+    # Engineered features
+    "trip_minutes",           # trip duration in minutes
+    "speed_kmh",              # average trip speed
+    "fare_per_km_net",        # fare per km excluding extra fees
+    "fare_per_passenger",     # fare divided by number of passengers
+    "extra_fees_total",       # total of all extra fees
+    "extra_fee_ratio",        # ratio of extra fees to total fare
+    "distance_bucket",        # distance category
+    "hour_of_day",            # pickup hour (0–23)
+    "weekday",                # day of the week (0=Mon, 6=Sun)
+    "is_weekend",             # 1 if weekend
+    #"rush_hour",              # 1 if rush hour (7–10 or 16–19)
+    "night_ride",             # 1 if night (22–5)
+    "weekend_night",          # 1 if weekend and night
+    #"rush_distance",          # distance x rush_hour interaction
+    "is_airport_trip",        # 1 if airport pickup/dropoff
 ]
 
-
-# ---------------------------------------------------------------------
-# SEED SETUP
-# ---------------------------------------------------------------------
-
-SEED = 42
-np.random.seed(SEED)
-random.seed(SEED)
 
 # ---------------------------------------------------------------------
 # LOAD DATA
@@ -132,21 +128,21 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("tpep_dropoff_datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False)
         )
 
-    # Time features
+    # pickup hour (0–23) and day of the week (0=Mon, 6=Sun)
     df = df.with_columns([
         pl.col("tpep_pickup_datetime").dt.hour().alias("hour_of_day"),
         pl.col("tpep_pickup_datetime").dt.weekday().alias("weekday"),
     ])
 
-    # Weekend flag
+    # 1 if weekend
     df = df.with_columns((pl.col("weekday") >= 5).cast(pl.Int8).alias("is_weekend"))
 
-    # Airport pickup flag
+    # 1 if airport pickup/dropoff
     df = df.with_columns(
         pl.col("PULocationID").is_in([132, 138]).cast(pl.Int8).alias("is_airport_trip")
     )
 
-    # Extra fees total
+    # total of all extra fees
     df = df.with_columns([
         (
             pl.col("airport_fee").fill_null(0)
@@ -156,15 +152,14 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
         ).alias("extra_fees_total")
     ])
 
-    # Net fare per km
+    # fare per km excluding extra fees
     df = df.with_columns(
         ((pl.col("fare_amount") - pl.col("extra_fees_total")) / pl.col("trip_distance"))
         .clip(0, 200)
         .alias("fare_per_km_net")
     )
 
-    # Fare per passenger
-    # Fare per passenger (mit Clip für Division durch Null)
+    # fare divided by number of passengers
     if "passenger_count" in df.columns:
         df = df.with_columns(
             (pl.col("fare_amount") / pl.col("passenger_count").clip(1, None))
@@ -172,7 +167,7 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
             .alias("fare_per_passenger")
         )
 
-    # Duration & Speed
+    # trip duration in minutes and average trip speed
     if "tpep_dropoff_datetime" in df.columns:
         df = df.with_columns(
             ((pl.col("tpep_dropoff_datetime") - pl.col("tpep_pickup_datetime"))
@@ -184,7 +179,7 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
             .alias("speed_kmh")
         )
 
-    # Distance bucket
+    # distance category
     df = df.with_columns([
         pl.when(pl.col("trip_distance") < 2)
         .then(0)
@@ -194,7 +189,8 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
         .alias("distance_bucket")
     ])
 
-    # Rush hour and night ride
+
+    # 1 if rush hour (7–10 or 16–19), 1 if night (22–5)
     df = df.with_columns([
         (
             (pl.col("hour_of_day").is_between(7, 10))
@@ -205,64 +201,57 @@ def engineer_features(df: pl.DataFrame) -> pl.DataFrame:
         .alias("night_ride"),
     ])
 
-    # Weekend-night combination
-    df = df.with_columns(
-        ((pl.col("is_weekend") == 1) & (pl.col("night_ride") == 1))
-        .cast(pl.Int8)
-        .alias("weekend_night")
-    )
-
     # Rush distance interaction
     df = df.with_columns(
         (pl.col("trip_distance") * pl.col("rush_hour"))
         .alias("rush_distance")
     )
 
-    # Extra fee ratio
+    # 1 if weekend and night
+    df = df.with_columns(
+        ((pl.col("is_weekend") == 1) & (pl.col("night_ride") == 1))
+        .cast(pl.Int8)
+        .alias("weekend_night")
+    )
+
+    # ratio of extra fees to total fare
     df = df.with_columns(
         (pl.col("extra_fees_total") / pl.col("fare_amount").clip(1, None))
         .clip(0, 1)
         .alias("extra_fee_ratio")
     )
 
-    # Circular time encoding
-    hour_rad = 2 * np.pi * pl.col("hour_of_day") / 24
-    df = df.with_columns([
-        hour_rad.sin().alias("hour_sin"),
-        hour_rad.cos().alias("hour_cos"),
-    ])
-
     return df
+
 # ---------------------------------------------------------------------
 # LOCATION CLUSTERING
 # ---------------------------------------------------------------------
 
-def compute_location_tip_clusters(df, type="pul"):
-    # PROBLEM: areas with low num_trips -> needs spatial smoothing
-    if type == "pul":
-        feature = "PULocationID"
-        new_feature = "pul_tip_rate"
-    else:
-        feature = "DOLocationID"
-        new_feature = "dol_tip_rate"
+def compute_location_tip_clusters(df, location_type="pul"):
+    cfg = LOCATION_CONFIG[location_type]
 
-    return df.group_by(feature).agg(pl.col(TARGET_VAR).mean().alias(new_feature))
+    # Compute mean tip rate per location
+    return df.group_by(cfg["id_col"]).agg(pl.col(TARGET_VAR).mean().alias(cfg["rate_col"]))
 
-
-def cluster_locations(location_stats, type="pul", n_clusters=10):
-    cfg = LOCATION_CONFIG[type]
+def cluster_locations(location_stats, location_type="pul", n_clusters=7):
+    # Cluster locations by smoothed tip rate
+    cfg = LOCATION_CONFIG[location_type]
     km = KMeans(n_clusters=n_clusters, random_state=SEED)
     labels = km.fit_predict(location_stats[cfg["rate_col"]].to_numpy().reshape(-1, 1))
+
+    # Add cluster labels
     return location_stats.with_columns(pl.Series(cfg["cluster_col"], labels).cast(pl.Int8))
 
 
-def apply_location_clusters(df, clusters, type="pul"):
-    cfg = LOCATION_CONFIG[type]
+def apply_location_clusters(df, clusters, location_type="pul"):
+    # Merge cluster info back into main dataset
+    cfg = LOCATION_CONFIG[location_type]
 
-    # Drop existing cluster column if present
+    # Drop old cluster column if it exists
     if cfg["cluster_col"] in df.columns:
         df = df.drop(cfg["cluster_col"])
 
+    # Join by location ID
     return df.join(clusters, on=cfg["id_col"], how="left")
 
 # ---------------------------------------------------------------------
@@ -276,23 +265,23 @@ def train_and_evaluate(df_train, sample_size=None):
 
     features = FEATURE_LIST
 
-    X = df_train[features].to_pandas()
+    x = df_train[features].to_pandas()
     y = df_train[TARGET_VAR].to_pandas()
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=SEED)
+    x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=SEED)
 
     model = HistGradientBoostingClassifier(
         max_depth=7,
         learning_rate=0.08,
         max_iter=350,
-        min_samples_leaf=20,
-        l2_regularization=1.0,
+        min_samples_leaf=10,
+        l2_regularization=0.3,
         class_weight="balanced",
         random_state=SEED
     )
 
-    model.fit(X_train, y_train)
-    preds = model.predict(X_val)
+    model.fit(x_train, y_train)
+    preds = model.predict(x_val)
     print("Validation F1 Score:", f1_score(y_val, preds))
 
     return model
@@ -327,8 +316,8 @@ def main():
     pul_stats = compute_location_tip_clusters(df_train, "pul")
     dol_stats = compute_location_tip_clusters(df_train, "dol")
 
-    pul_clusters = cluster_locations(pul_stats, type="pul", n_clusters=7)
-    dol_clusters = cluster_locations(dol_stats, type="dol", n_clusters=7)
+    pul_clusters = cluster_locations(pul_stats, location_type="pul", n_clusters=5)
+    dol_clusters = cluster_locations(dol_stats, location_type="dol", n_clusters=5)
 
     df_train = apply_location_clusters(df_train, pul_clusters, "pul")
     df_train = apply_location_clusters(df_train, dol_clusters, "dol")
